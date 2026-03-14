@@ -1,0 +1,99 @@
+/* ============================
+   Traditional Theme (default)
+   ============================ */
+:root, [data-theme="traditional"] {
+  --app-bg: #2d1810;
+  --board-bg: #DEB887;
+  --board-line: #8B4513;
+  --panel-bg: #3d2518;
+  --panel-header-bg: #2d1810;
+  --piece-font: 'KaiTi', 'STKaiti', 'BiauKai', serif;
+
+  --piece-red-outer: #f5e0b5;
+  --piece-red-inner: #f0d090;
+  --piece-red-border: #8B1A1A;
+  --piece-red-text: #8B0000;
+
+  --piece-black-outer: #2a2a2a;
+  --piece-black-inner: #1a1a1a;
+  --piece-black-border: #555;
+  --piece-black-text: #E8D5A0;
+
+  --red-color: #CC2200;
+  --black-color: #D4AF37;
+  --text-main: #F5DEB3;
+  --text-muted: #A0906A;
+  --highlight-bg: rgba(255, 215, 0, 0.2);
+  --hover-bg: rgba(255, 255, 255, 0.05);
+
+  --btn-primary: #8B1A1A;
+  --btn-secondary: rgba(255, 255, 255, 0.08);
+  --btn-danger: #6B2222;
+  --accent: #D4AF37;
+  --accent-light: rgba(212, 175, 55, 0.15);
+}
+
+/* ============================
+   Modern Theme
+   ============================ */
+[data-theme="modern"] {
+  --app-bg: #F5F0E8;
+  --board-bg: #F0D9B5;
+  --board-line: #B58863;
+  --panel-bg: #FFFFFF;
+  --panel-header-bg: #F0F0F0;
+  --piece-font: 'Noto Sans TC', 'PingFang TC', sans-serif;
+
+  --piece-red-outer: #E53935;
+  --piece-red-inner: #EF5350;
+  --piece-red-border: #B71C1C;
+  --piece-red-text: #FFFFFF;
+
+  --piece-black-outer: #37474F;
+  --piece-black-inner: #455A64;
+  --piece-black-border: #263238;
+  --piece-black-text: #FFFFFF;
+
+  --red-color: #D32F2F;
+  --black-color: #37474F;
+  --text-main: #212121;
+  --text-muted: #757575;
+  --highlight-bg: rgba(33, 150, 243, 0.12);
+  --hover-bg: rgba(0, 0, 0, 0.04);
+
+  --btn-primary: #D32F2F;
+  --btn-secondary: #F5F5F5;
+  --btn-danger: #C62828;
+  --accent: #1565C0;
+  --accent-light: rgba(21, 101, 192, 0.12);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--app-bg);
+  color: var(--text-main);
+  font-family: 'Noto Sans TC', 'Microsoft JhengHei', sans-serif;
+  transition: background 0.3s, color 0.3s;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.3); border-radius: 2px; }
+
+/* AI thinking pulse animation */
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.thinking { animation: thinking-pulse 1.2s infinite; }

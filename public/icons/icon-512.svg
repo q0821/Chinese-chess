@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="61.44" fill="#2d1810"/>
+  <circle cx="256" cy="256" r="194.56" fill="#f5e0b5" stroke="#8B1A1A" stroke-width="15.36"/>
+  <circle cx="256" cy="256" r="153.6" fill="#f0d090" stroke="#8B1A1A" stroke-width="7.68"/>
+  <text x="256" y="256" font-family="serif" font-size="194.56" font-weight="bold" fill="#8B0000" text-anchor="middle" dominant-baseline="central">象</text>
+</svg>
