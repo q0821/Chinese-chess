@@ -78,7 +78,7 @@ export const useGameStore = defineStore('game', () => {
 
   function selectPiece(pos: Position) {
     if (!isPlayerTurn.value) return
-    if (status.value !== 'playing') return
+    if (status.value !== 'playing' && status.value !== 'check') return
 
     const piece = board.value[pos.row][pos.col]
 
