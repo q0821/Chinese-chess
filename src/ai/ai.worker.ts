@@ -1,22 +1,34 @@
 import type { Board, Difficulty, PieceColor } from '../game/types'
 import { getBestMove, getBestMoveIterative } from './minimax'
 import { getAllLegalMoves } from '../game/rules'
+import { getOpeningMove } from './opening'
 
 interface WorkerRequest {
   board: Board
   color: PieceColor
   difficulty: Difficulty
+  moveCount: number
 }
 
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 1,
-  medium: 3,
+  medium: 2,
   hard: 4,
   expert: 6,
 }
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
-  const { board, color, difficulty } = e.data
+  const { board, color, difficulty, moveCount } = e.data
+
+  // Opening book for non-easy difficulties (Red's first move only)
+  if (difficulty !== 'easy' && color === 'red') {
+    const openingMove = getOpeningMove(moveCount)
+    if (openingMove) {
+      self.postMessage({ move: openingMove })
+      return
+    }
+  }
+
   const depth = DEPTH_MAP[difficulty]
   let move
 

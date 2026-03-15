@@ -5,21 +5,14 @@ import type {
   SerializedGameState, Theme,
 } from '../game/types'
 import { createInitialBoard, applyMove, cloneBoard } from '../game/board'
-import { getLegalMoves, isInCheck, isCheckmate, isStalemate, getAllLegalMoves } from '../game/rules'
+import { getLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
 import { generateNotation } from '../game/notation'
 import { autoSave } from '../utils/storage'
-import { getBestMove, getBestMoveIterative } from '../ai/minimax'
-
-const DEPTH_MAP: Record<Difficulty, number> = {
-  easy: 1,
-  medium: 3,
-  hard: 4,
-  expert: 6,
-}
 
 export const useGameStore = defineStore('game', () => {
   // State
   const board = ref<Board>(createInitialBoard())
+  const initialBoard = ref<Board>(createInitialBoard())
   const currentTurn = ref<PieceColor>('red')
   const moveHistory = ref<Move[]>([])
   const capturedPieces = ref<{ red: Piece[]; black: Piece[] }>({ red: [], black: [] })
@@ -34,8 +27,8 @@ export const useGameStore = defineStore('game', () => {
   const replayIndex = ref(0)
   const theme = ref<Theme>('traditional')
 
-  // For replay: store snapshots
-  const replayBoards = ref<Board[]>([])
+  // Track active AI worker so we can terminate it on undo/new game
+  let aiWorker: Worker | null = null
 
   // Computed
   const isPlayerTurn = computed(() => {
@@ -45,16 +38,21 @@ export const useGameStore = defineStore('game', () => {
 
   const isInReplay = computed(() => status.value === 'replay')
 
+  // Boards are reconstructed from moveHistory snapshots — no duplicate storage
   const currentBoard = computed(() => {
-    if (isInReplay.value && replayBoards.value.length > 0) {
-      return replayBoards.value[replayIndex.value] ?? board.value
+    if (isInReplay.value) {
+      if (replayIndex.value === 0) return initialBoard.value
+      return moveHistory.value[replayIndex.value - 1].boardSnapshot
     }
     return board.value
   })
 
   // Actions
   function newGame(opts?: { mode?: GameMode; difficulty?: Difficulty; playerColor?: PieceColor }) {
+    aiWorker?.terminate()
+    aiWorker = null
     board.value = createInitialBoard()
+    initialBoard.value = cloneBoard(board.value)
     currentTurn.value = 'red'
     moveHistory.value = []
     capturedPieces.value = { red: [], black: [] }
@@ -63,7 +61,6 @@ export const useGameStore = defineStore('game', () => {
     hint.value = null
     isAIThinking.value = false
     replayIndex.value = 0
-    replayBoards.value = [cloneBoard(board.value)]
     status.value = 'playing'
 
     if (opts?.mode) mode.value = opts.mode
@@ -74,6 +71,13 @@ export const useGameStore = defineStore('game', () => {
     if (mode.value === 'pvc' && playerColor.value === 'black') {
       triggerAI()
     }
+  }
+
+  function goToSetup() {
+    aiWorker?.terminate()
+    aiWorker = null
+    isAIThinking.value = false
+    status.value = 'setup'
   }
 
   function selectPiece(pos: Position) {
@@ -128,7 +132,6 @@ export const useGameStore = defineStore('game', () => {
 
     board.value = newBoard
     moveHistory.value.push(move)
-    replayBoards.value.push(cloneBoard(newBoard))
 
     if (captured) {
       capturedPieces.value[captured.color].push(captured)
@@ -168,38 +171,33 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function triggerAI() {
+    aiWorker?.terminate()
     isAIThinking.value = true
     const boardSnapshot = cloneBoard(board.value)
     const color = currentTurn.value
     const diff = difficulty.value
-    const depth = DEPTH_MAP[diff]
+    const moveCount = moveHistory.value.length
 
-    // Use setTimeout to allow UI to update first
-    setTimeout(() => {
-      let move
-      if (diff === 'easy') {
-        const moves = getAllLegalMoves(boardSnapshot, color)
-        if (moves.length === 0) { isAIThinking.value = false; return }
-        const captures = moves.filter(m => boardSnapshot[m.to.row][m.to.col])
-        if (captures.length > 0 && Math.random() > 0.3) {
-          move = captures[Math.floor(Math.random() * captures.length)]
-        } else {
-          move = moves[Math.floor(Math.random() * moves.length)]
-        }
-      } else if (diff === 'expert') {
-        move = getBestMoveIterative(boardSnapshot, color, depth, 3000)
-      } else {
-        move = getBestMove(boardSnapshot, color, depth)
-      }
+    const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
+    aiWorker = worker
 
+    worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
+      worker.terminate()
+      if (aiWorker === worker) aiWorker = null
       isAIThinking.value = false
-      if (move) makeMove(move.from, move.to)
-    }, diff === 'easy' ? 300 : 100)
+      if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
+    }
+
+    worker.postMessage({ board: boardSnapshot, color, difficulty: diff, moveCount })
   }
 
   function undoMove() {
     if (moveHistory.value.length === 0) return
     if (isInReplay.value) return
+
+    aiWorker?.terminate()
+    aiWorker = null
+    isAIThinking.value = false
 
     // In PvC mode, undo both AI move and player move
     const undoCount = mode.value === 'pvc' && moveHistory.value.length >= 2 ? 2 : 1
@@ -207,7 +205,6 @@ export const useGameStore = defineStore('game', () => {
     for (let i = 0; i < undoCount; i++) {
       if (moveHistory.value.length === 0) break
       const lastMove = moveHistory.value.pop()!
-      replayBoards.value.pop()
       if (lastMove.captured) {
         const arr = capturedPieces.value[lastMove.captured.color]
         const idx = arr.map((p, i) => ({ p, i })).reverse().find(({ p }) => p.id === lastMove.captured!.id)?.i ?? -1
@@ -215,11 +212,11 @@ export const useGameStore = defineStore('game', () => {
       }
     }
 
-    // Restore board from last snapshot
-    if (replayBoards.value.length > 0) {
-      board.value = cloneBoard(replayBoards.value[replayBoards.value.length - 1])
+    // Restore board from history or initial board
+    if (moveHistory.value.length > 0) {
+      board.value = cloneBoard(moveHistory.value[moveHistory.value.length - 1].boardSnapshot)
     } else {
-      board.value = createInitialBoard()
+      board.value = cloneBoard(initialBoard.value)
     }
 
     // Restore turn
@@ -239,15 +236,20 @@ export const useGameStore = defineStore('game', () => {
     if (!isPlayerTurn.value) return
     if (status.value !== 'playing' && status.value !== 'check') return
 
+    isAIThinking.value = true
     const boardSnapshot = cloneBoard(board.value)
     const color = currentTurn.value
 
-    isAIThinking.value = true
-    setTimeout(() => {
-      const move = getBestMove(boardSnapshot, color, 3)
+    const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
+
+    worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
+      worker.terminate()
       isAIThinking.value = false
-      if (move) hint.value = { from: move.from, to: move.to }
-    }, 100)
+      if (e.data.move) hint.value = { from: e.data.move.from, to: e.data.move.to }
+    }
+
+    // Use medium difficulty for hints (depth 2)
+    worker.postMessage({ board: boardSnapshot, color, difficulty: 'medium', moveCount: moveHistory.value.length })
   }
 
   function startReplay() {
@@ -259,12 +261,12 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function replayStep(delta: number) {
-    const max = replayBoards.value.length - 1
+    const max = moveHistory.value.length
     replayIndex.value = Math.max(0, Math.min(replayIndex.value + delta, max))
   }
 
   function exitReplay() {
-    replayIndex.value = replayBoards.value.length - 1
+    replayIndex.value = 0
     status.value = 'playing'
   }
 
@@ -294,7 +296,10 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function loadState(state: SerializedGameState) {
+    aiWorker?.terminate()
+    aiWorker = null
     board.value = state.board
+    initialBoard.value = createInitialBoard()
     currentTurn.value = state.currentTurn
     moveHistory.value = state.moveHistory
     capturedPieces.value = state.capturedPieces
@@ -305,8 +310,8 @@ export const useGameStore = defineStore('game', () => {
     selectedPiece.value = null
     legalMoves.value = []
     hint.value = null
+    isAIThinking.value = false
     replayIndex.value = 0
-    replayBoards.value = [createInitialBoard(), ...state.moveHistory.map(m => m.boardSnapshot)]
   }
 
   function loadSavedTheme() {
@@ -318,11 +323,11 @@ export const useGameStore = defineStore('game', () => {
     // State
     board, currentBoard, currentTurn, moveHistory, capturedPieces,
     status, playerColor, mode, difficulty, selectedPiece, legalMoves,
-    hint, isAIThinking, replayIndex, theme, replayBoards,
+    hint, isAIThinking, replayIndex, theme,
     // Computed
     isPlayerTurn, isInReplay,
     // Actions
-    newGame, selectPiece, makeMove, undoMove, getHint,
+    newGame, goToSetup, selectPiece, makeMove, undoMove, getHint,
     startReplay, replayStep, exitReplay, setTheme,
     serialize, loadState, loadSavedTheme,
   }

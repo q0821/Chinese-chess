@@ -136,7 +136,7 @@ function confirmNewGame() {
   if (store.moveHistory.length > 0) {
     if (!confirm('確定要開始新局嗎？')) return
   }
-  store.status = 'setup' as any
+  store.goToSetup()
 }
 
 function formatTime(ts: number) {
