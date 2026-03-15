@@ -54,7 +54,6 @@
             >
               <span class="diff-icon">{{ d.icon }}</span>
               <span class="diff-name">{{ d.label }}</span>
-              <span class="diff-desc">{{ d.desc }}</span>
             </button>
           </div>
         </div>
@@ -95,11 +94,11 @@ const playerColor = ref<PieceColor>('red')
 const difficulty = ref<Difficulty>('medium')
 const hasAutoSave = ref(false)
 
-const difficulties: { value: Difficulty; label: string; icon: string; desc: string }[] = [
-  { value: 'easy', label: '入門', icon: '🌱', desc: '隨機走法' },
-  { value: 'medium', label: '中級', icon: '⚔️', desc: '搜尋深度 3' },
-  { value: 'hard', label: '高手', icon: '🔥', desc: '深度 4 + 開局書' },
-  { value: 'expert', label: '大師', icon: '👑', desc: '深度 6 迭代加深' },
+const difficulties: { value: Difficulty; label: string; icon: string }[] = [
+  { value: 'easy', label: '入門', icon: '🌱' },
+  { value: 'medium', label: '中級', icon: '⚔️' },
+  { value: 'hard', label: '高手', icon: '🔥' },
+  { value: 'expert', label: '大師', icon: '👑' },
 ]
 
 const themes: { value: Theme; label: string }[] = [
@@ -211,7 +210,6 @@ function continueGame() {
 }
 .diff-icon { font-size: 20px; }
 .diff-name { font-family: var(--piece-font); font-weight: 600; font-size: 14px; color: var(--text-main); }
-.diff-desc { font-size: 11px; color: var(--text-muted); }
 
 .btn {
   padding: 12px;
