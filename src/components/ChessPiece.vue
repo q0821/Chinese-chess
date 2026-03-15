@@ -1,5 +1,10 @@
 <template>
-  <g :style="{ transform: `translate(${cx}px,${cy}px)` }" class="chess-piece" :class="[piece.color, { selected }]">
+  <g
+    ref="el"
+    :transform="`translate(${cx},${cy})`"
+    class="chess-piece"
+    :class="[piece.color, { selected }]"
+  >
     <!-- Outer ring -->
     <circle :r="radius" class="piece-outer" />
     <!-- Inner ring -->
@@ -15,7 +20,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { Piece } from '../game/types'
 
 const props = defineProps<{
@@ -38,12 +43,26 @@ const PIECE_CHARS: Record<string, Record<string, string>> = {
 }
 
 const pieceName = computed(() => PIECE_CHARS[props.piece.type]?.[props.piece.color] ?? '?')
+
+const el = ref<SVGGElement | null>(null)
+
+// Animate piece movement using Web Animations API
+watch([() => props.cx, () => props.cy], ([newCx, newCy], [oldCx, oldCy]) => {
+  if (!el.value || (oldCx === newCx && oldCy === newCy)) return
+  el.value.animate(
+    [
+      { transform: `translate(${oldCx}px, ${oldCy}px)` },
+      { transform: `translate(${newCx}px, ${newCy}px)` },
+    ],
+    { duration: 260, easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)', fill: 'none' }
+  )
+}, { flush: 'post' })
 </script>
 
 <style scoped>
 .chess-piece {
   cursor: pointer;
-  transition: transform 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.15s;
+  transition: filter 0.15s;
 }
 .chess-piece:hover {
   filter: brightness(1.15);

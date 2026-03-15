@@ -55,6 +55,12 @@
       </div>
 
       <button
+        class="btn btn-secondary btn-sound"
+        @click="handleToggleSound"
+        :title="soundOn ? '關閉音效' : '開啟音效'"
+      >{{ soundOn ? '🔊 音效' : '🔇 靜音' }}</button>
+
+      <button
         class="btn btn-danger"
         @click="confirmNewGame"
         :disabled="store.isAIThinking"
@@ -79,12 +85,18 @@
 import { ref, computed } from 'vue'
 import { useGameStore } from '../stores/game'
 import { saveGame, getSaveSlots } from '../utils/storage'
+import { isSoundEnabled, toggleSound } from '../utils/sound'
 import type { SaveSlot } from '../game/types'
 
 const store = useGameStore()
 const showSave = ref(false)
 const showLoad = ref(false)
 const saveSlots = ref<SaveSlot[]>(getSaveSlots())
+const soundOn = ref(isSoundEnabled())
+
+function handleToggleSound() {
+  soundOn.value = toggleSound()
+}
 
 const gameOver = computed(() =>
   store.status === 'checkmate' || store.status === 'draw'

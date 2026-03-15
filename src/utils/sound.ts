@@ -1,11 +1,22 @@
 let ctx: AudioContext | null = null
 
+// Sound enabled state, persisted to localStorage
+let _enabled = localStorage.getItem('chess-sound') !== 'off'
+
+export function isSoundEnabled() { return _enabled }
+export function toggleSound() {
+  _enabled = !_enabled
+  localStorage.setItem('chess-sound', _enabled ? 'on' : 'off')
+  return _enabled
+}
+
 function getCtx(): AudioContext {
   if (!ctx) ctx = new AudioContext()
   return ctx
 }
 
 function play(fn: (ctx: AudioContext) => void) {
+  if (!_enabled) return
   try {
     const c = getCtx()
     if (c.state === 'suspended') c.resume()

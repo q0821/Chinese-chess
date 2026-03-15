@@ -150,13 +150,16 @@ onMounted(() => {
 }
 
 .version-footer {
-  text-align: center;
-  padding: 6px;
-  font-size: 11px;
+  position: fixed;
+  bottom: 4px;
+  right: 8px;
+  font-size: 10px;
   opacity: 0.35;
   font-family: monospace;
   color: var(--text-muted);
   user-select: none;
+  pointer-events: none;
+  z-index: 10;
 }
 
 @media (max-width: 900px) {
