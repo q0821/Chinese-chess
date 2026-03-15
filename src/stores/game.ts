@@ -170,7 +170,7 @@ export const useGameStore = defineStore('game', () => {
     // AI turn
     if (status.value === 'playing' || status.value === 'check') {
       if (mode.value === 'pvc' && currentTurn.value !== playerColor.value) {
-        triggerAI()
+        setTimeout(triggerAI, 500)
       }
     }
   }
