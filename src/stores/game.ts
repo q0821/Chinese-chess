@@ -8,6 +8,7 @@ import { createInitialBoard, applyMove, cloneBoard } from '../game/board'
 import { getLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
 import { generateNotation } from '../game/notation'
 import { autoSave } from '../utils/storage'
+import { playMove, playCapture, playCheck, playCheckmate } from '../utils/sound'
 
 export const useGameStore = defineStore('game', () => {
   // State
@@ -148,15 +149,19 @@ export const useGameStore = defineStore('game', () => {
     if (isCheckmate(newBoard, nextTurn)) {
       status.value = 'checkmate'
       currentTurn.value = nextTurn
+      playCheckmate()
     } else if (isStalemate(newBoard, nextTurn)) {
       status.value = 'draw'
       currentTurn.value = nextTurn
+      playCheckmate()
     } else if (isInCheck(newBoard, nextTurn)) {
       status.value = 'check'
       currentTurn.value = nextTurn
+      playCheck()
     } else {
       status.value = 'playing'
       currentTurn.value = nextTurn
+      if (captured) playCapture(); else playMove()
     }
 
     // Auto-save
