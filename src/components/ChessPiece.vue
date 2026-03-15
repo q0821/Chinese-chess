@@ -1,5 +1,5 @@
 <template>
-  <g :transform="`translate(${cx},${cy})`" class="chess-piece" :class="[piece.color, { selected }]">
+  <g :style="{ transform: `translate(${cx}px,${cy}px)` }" class="chess-piece" :class="[piece.color, { selected }]">
     <!-- Outer ring -->
     <circle :r="radius" class="piece-outer" />
     <!-- Inner ring -->
@@ -43,7 +43,7 @@ const pieceName = computed(() => PIECE_CHARS[props.piece.type]?.[props.piece.col
 <style scoped>
 .chess-piece {
   cursor: pointer;
-  transition: filter 0.15s;
+  transition: transform 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94), filter 0.15s;
 }
 .chess-piece:hover {
   filter: brightness(1.15);

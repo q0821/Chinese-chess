@@ -45,6 +45,11 @@
         </div>
       </aside>
     </div>
+
+    <!-- Version footer -->
+    <footer class="version-footer">
+      v{{ appVersion }} · {{ buildDate }}
+    </footer>
   </div>
 </template>
 
@@ -61,6 +66,9 @@ import type { Theme } from './game/types'
 const store = useGameStore()
 
 const gameOver = computed(() => store.status === 'checkmate' || store.status === 'draw')
+
+const appVersion = __APP_VERSION__
+const buildDate = __BUILD_DATE__
 
 const themes: { value: Theme; label: string }[] = [
   { value: 'traditional', label: '傳統' },
@@ -139,6 +147,16 @@ onMounted(() => {
   border-color: var(--accent);
   background: var(--accent-light);
   color: var(--accent);
+}
+
+.version-footer {
+  text-align: center;
+  padding: 6px;
+  font-size: 11px;
+  opacity: 0.35;
+  font-family: monospace;
+  color: var(--text-muted);
+  user-select: none;
 }
 
 @media (max-width: 900px) {
