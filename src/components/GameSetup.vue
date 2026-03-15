@@ -95,8 +95,8 @@ const difficulty = ref<Difficulty>('medium')
 const hasAutoSave = ref(false)
 
 const difficulties: { value: Difficulty; label: string; icon: string }[] = [
-  { value: 'easy', label: '入門', icon: '🌱' },
-  { value: 'medium', label: '中級', icon: '⚔️' },
+  { value: 'easy', label: '新手', icon: '🌱' },
+  { value: 'medium', label: '業餘', icon: '⚔️' },
   { value: 'hard', label: '高手', icon: '🔥' },
   { value: 'expert', label: '大師', icon: '👑' },
 ]
