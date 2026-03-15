@@ -11,16 +11,14 @@
       <rect x="0" y="0" :width="BOARD_W" :height="BOARD_H" class="board-bg" rx="4" />
 
       <!-- Grid lines -->
-      <!-- Vertical lines -->
-      <line
-        v-for="c in 9"
-        :key="`vl-${c}`"
-        :x1="PADDING + (c-1)*CELL"
-        :y1="PADDING"
-        :x2="PADDING + (c-1)*CELL"
-        :y2="PADDING + 9*CELL"
-        class="board-line"
-      />
+      <!-- Outer vertical lines (full height) -->
+      <line :x1="PADDING" :y1="PADDING" :x2="PADDING" :y2="PADDING + 9*CELL" class="board-line" />
+      <line :x1="PADDING + 8*CELL" :y1="PADDING" :x2="PADDING + 8*CELL" :y2="PADDING + 9*CELL" class="board-line" />
+      <!-- Inner vertical lines (split at river) -->
+      <template v-for="c in 7" :key="`vl-${c}`">
+        <line :x1="PADDING + c*CELL" :y1="PADDING" :x2="PADDING + c*CELL" :y2="PADDING + 4*CELL" class="board-line" />
+        <line :x1="PADDING + c*CELL" :y1="PADDING + 5*CELL" :x2="PADDING + c*CELL" :y2="PADDING + 9*CELL" class="board-line" />
+      </template>
       <!-- Horizontal lines -->
       <line
         v-for="r in 10"
@@ -32,9 +30,17 @@
         class="board-line"
       />
 
+      <!-- River area background -->
+      <rect
+        :x="PADDING + 1"
+        :y="PADDING + 4*CELL + 1"
+        :width="8*CELL - 2"
+        :height="CELL - 2"
+        class="river-bg"
+      />
       <!-- River text -->
-      <text :x="BOARD_W/2 - 70" :y="PADDING + 4.5*CELL + 6" class="river-text">楚河</text>
-      <text :x="BOARD_W/2 + 20" :y="PADDING + 4.5*CELL + 6" class="river-text">漢界</text>
+      <text :x="PADDING + 2*CELL" :y="PADDING + 4.5*CELL + 1" class="river-text" text-anchor="middle">楚河</text>
+      <text :x="PADDING + 6*CELL" :y="PADDING + 4.5*CELL + 1" class="river-text" text-anchor="middle">漢界</text>
 
       <!-- Palace diagonals - Red -->
       <line :x1="PADDING+3*CELL" :y1="PADDING+7*CELL" :x2="PADDING+5*CELL" :y2="PADDING+9*CELL" class="board-line" />
@@ -191,12 +197,16 @@ function handleBoardClick(e: MouseEvent) {
   stroke: var(--board-line);
   stroke-width: 1.2;
 }
+.river-bg {
+  fill: rgba(0, 0, 0, 0.04);
+}
 .river-text {
   font-size: 22px;
   fill: var(--board-line);
   font-family: var(--piece-font);
   dominant-baseline: middle;
-  opacity: 0.6;
+  opacity: 0.55;
+  letter-spacing: 4px;
 }
 .legal-dot {
   fill: rgba(80, 200, 80, 0.55);
