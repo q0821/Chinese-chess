@@ -13,8 +13,8 @@ interface WorkerRequest {
 const DEPTH_MAP: Record<Difficulty, number> = {
   easy: 1,
   medium: 2,
-  hard: 4,
-  expert: 6,
+  hard: 5,
+  expert: 8,
 }
 
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
@@ -42,7 +42,7 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
       move = moves[Math.floor(Math.random() * moves.length)]
     }
   } else if (difficulty === 'expert') {
-    move = getBestMoveIterative(board, color, depth, 3000)
+    move = getBestMoveIterative(board, color, depth, 5000)
   } else {
     move = getBestMove(board, color, depth)
   }
