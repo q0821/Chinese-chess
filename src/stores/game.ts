@@ -5,7 +5,7 @@ import type {
   SerializedGameState, Theme,
 } from '../game/types'
 import { createInitialBoard, applyMove, cloneBoard } from '../game/board'
-import { getLegalMoves, getAllLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
+import { getLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
 import { generateNotation } from '../game/notation'
 import { autoSave } from '../utils/storage'
 import { playMove, playCapture, playCheck, playCheckmate } from '../utils/sound'
@@ -182,6 +182,23 @@ export const useGameStore = defineStore('game', () => {
     }
   }
 
+  function triggerMinimaxFallback(
+    boardSnapshot: Board,
+    color: PieceColor,
+    diff: Difficulty,
+    moveCount: number,
+  ) {
+    const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
+    aiWorker = worker
+    worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
+      worker.terminate()
+      if (aiWorker === worker) aiWorker = null
+      isAIThinking.value = false
+      if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
+    }
+    worker.postMessage({ board: boardSnapshot, color, difficulty: diff, moveCount })
+  }
+
   function triggerAI() {
     killAllWorkers()
     isAIThinking.value = true
@@ -190,61 +207,44 @@ export const useGameStore = defineStore('game', () => {
     const diff = difficulty.value
     const moveCount = moveHistory.value.length
 
-    if (diff === 'expert') {
-      // SMP: distribute root moves across parallel workers
-      const allMoves = getAllLegalMoves(boardSnapshot, color)
-      if (allMoves.length === 0) { isAIThinking.value = false; return }
-
-      const nWorkers = Math.min(4, navigator.hardwareConcurrency || 2)
-      const chunks: Array<typeof allMoves> = Array.from({ length: nWorkers }, () => [])
-      allMoves.forEach((m, i) => chunks[i % nWorkers].push(m))
-      const nonEmptyChunks = chunks.filter(c => c.length > 0)
-
-      let completed = 0
-      let bestMove: { from: Position; to: Position } | null = null
-      let bestScore = color === 'red' ? -Infinity : Infinity
-      const spawnedWorkers: Worker[] = []
-
-      for (const chunk of nonEmptyChunks) {
-        const worker = new Worker(new URL('../ai/smp-worker.ts', import.meta.url), { type: 'module' })
-        spawnedWorkers.push(worker)
-        smpWorkers.push(worker)
-
-        worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position; score: number } | null }>) => {
-          worker.terminate()
-          completed++
-
-          const result = e.data.move
-          if (result) {
-            const better = color === 'red' ? result.score > bestScore : result.score < bestScore
-            if (!bestMove || better) {
-              bestScore = result.score
-              bestMove = { from: result.from, to: result.to }
-            }
-          }
-
-          if (completed === spawnedWorkers.length) {
-            smpWorkers = smpWorkers.filter(w => !spawnedWorkers.includes(w))
-            isAIThinking.value = false
-            if (bestMove) makeMove(bestMove.from, bestMove.to)
-          }
-        }
-
-        worker.postMessage({ board: boardSnapshot, color, moves: chunk, maxDepth: 8, timeLimitMs: 5000 })
-      }
-    } else {
-      // Single-worker path for easy / medium / hard
-      const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
+    if (diff === 'hard' || diff === 'expert') {
+      // Fairy-Stockfish (NNUE) path — much stronger than our minimax
+      const timeMs = diff === 'expert' ? 5000 : 2000
+      const worker = new Worker('/sf-worker.js') // classic worker (not ES module)
       aiWorker = worker
 
-      worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
+      const onReady = () => {
+        worker.postMessage({ type: 'go', board: boardSnapshot, color, timeMs })
+      }
+
+      let engineReady = false
+      worker.onmessage = (e: MessageEvent<{ type: string; from?: Position; to?: Position; msg?: string }>) => {
+        const data = e.data
+        if (data.type === 'ready' && !engineReady) {
+          engineReady = true
+          onReady()
+        } else if (data.type === 'move') {
+          worker.terminate()
+          if (aiWorker === worker) aiWorker = null
+          isAIThinking.value = false
+          if (data.from && data.to) makeMove(data.from, data.to)
+        } else if (data.type === 'error') {
+          // Stockfish failed (e.g. no SharedArrayBuffer) — fall back to minimax
+          worker.terminate()
+          if (aiWorker === worker) aiWorker = null
+          isAIThinking.value = false
+          triggerMinimaxFallback(boardSnapshot, color, diff, moveCount)
+        }
+      }
+      worker.onerror = () => {
         worker.terminate()
         if (aiWorker === worker) aiWorker = null
         isAIThinking.value = false
-        if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
+        triggerMinimaxFallback(boardSnapshot, color, diff, moveCount)
       }
-
-      worker.postMessage({ board: boardSnapshot, color, difficulty: diff, moveCount })
+    } else {
+      // Single-worker minimax for easy / medium
+      triggerMinimaxFallback(boardSnapshot, color, diff, moveCount)
     }
   }
 
