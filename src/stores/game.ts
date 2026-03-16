@@ -48,7 +48,15 @@ export const useGameStore = defineStore('game', () => {
         sfPendingGo = null
       } else if (data.type === 'move') {
         isAIThinking.value = false
-        if (data.from && data.to) makeMove(data.from as Position, data.to as Position)
+        // Ignore stale results if it's no longer the AI's turn
+        if (
+          data.from && data.to &&
+          mode.value === 'pvc' &&
+          currentTurn.value !== playerColor.value &&
+          (status.value === 'playing' || status.value === 'check')
+        ) {
+          makeMove(data.from as Position, data.to as Position)
+        }
       } else if (data.type === 'error') {
         // WASM init failed (no SharedArrayBuffer) — kill SF worker and fall back to minimax
         sfWorker?.terminate()
@@ -249,6 +257,11 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function triggerAI() {
+    // Guard against stale setTimeout calls after undo / new game
+    if (mode.value !== 'pvc') return
+    if (currentTurn.value === playerColor.value) return
+    if (status.value !== 'playing' && status.value !== 'check') return
+
     // Stop any running minimax worker; keep sfWorker alive to avoid reload
     aiWorker?.terminate()
     aiWorker = null
