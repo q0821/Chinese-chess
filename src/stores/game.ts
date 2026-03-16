@@ -38,9 +38,12 @@ export const useGameStore = defineStore('game', () => {
 
   function ensureSfWorker() {
     if (sfWorker) return
-    sfWorker = new Worker('/sf-worker.js')
+    const worker = new Worker('/sf-worker.js')
+    sfWorker = worker
     sfWorkerReady = false
-    sfWorker.onmessage = (e: MessageEvent<{ type: string; from?: Position; to?: Position; msg?: string }>) => {
+    worker.onmessage = (e: MessageEvent<{ type: string; from?: Position; to?: Position; msg?: string }>) => {
+      // Discard messages from stale workers (terminated but queued before terminate)
+      if (sfWorker !== worker) return
       const data = e.data
       if (data.type === 'ready') {
         sfWorkerReady = true
@@ -68,7 +71,8 @@ export const useGameStore = defineStore('game', () => {
         triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
       }
     }
-    sfWorker.onerror = () => {
+    worker.onerror = () => {
+      if (sfWorker !== worker) return
       sfWorker?.terminate()
       sfWorker = null
       sfWorkerReady = false
