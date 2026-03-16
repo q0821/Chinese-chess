@@ -18,6 +18,8 @@ interface TTEntry {
   score: number
   depth: number
   flag: TTFlag
+  bestFrom: number  // encoded as row*9+col, -1 if unknown
+  bestTo: number
 }
 const transpositionTable = new Map<string, TTEntry>()
 const TT_MAX_SIZE = 500000
@@ -55,7 +57,6 @@ function isKiller(depth: number, move: { from: Position; to: Position }): boolea
 }
 
 // ── History Heuristic ──────────────────────────────────────────────────────
-// Counts how often each quiet move causes a beta cutoff; used to order moves.
 const historyTable = new Map<number, number>()
 
 function historyKey(from: Position, to: Position): number {
@@ -75,15 +76,21 @@ const ATTACKER_VALUES: Record<string, number> = {
   king: 1, rook: 9, cannon: 8, horse: 7, elephant: 6, advisor: 5, pawn: 4,
 }
 
-function scoreMove(board: Board, from: Position, to: Position, depth: number): number {
+function scoreMove(
+  board: Board, from: Position, to: Position, depth: number,
+  ttFrom: number, ttTo: number,
+): number {
+  const fe = from.row * 9 + from.col
+  const te = to.row * 9 + to.col
+  // 0. TT move — try the best move from previous search first
+  if (fe === ttFrom && te === ttTo) return 30000
   const victim   = board[to.row][to.col]
   const attacker = board[from.row][from.col]
-  // 1. Captures ordered by MVV-LVA
+  // 1. Captures (MVV-LVA)
   if (victim && attacker)
     return 20000 + VICTIM_VALUES[victim.type] * 10 - ATTACKER_VALUES[attacker.type]
   // 2. Killer moves
-  if (isKiller(depth, { from, to }))
-    return 10000
+  if (isKiller(depth, { from, to })) return 10000
   // 3. History heuristic
   return historyTable.get(historyKey(from, to)) ?? 0
 }
@@ -92,9 +99,13 @@ function orderMoves(
   board: Board,
   moves: Array<{ from: Position; to: Position }>,
   depth: number,
+  ttFrom = -1,
+  ttTo   = -1,
 ): Array<{ from: Position; to: Position }> {
   return [...moves].sort(
-    (a, b) => scoreMove(board, b.from, b.to, depth) - scoreMove(board, a.from, a.to, depth),
+    (a, b) =>
+      scoreMove(board, b.from, b.to, depth, ttFrom, ttTo) -
+      scoreMove(board, a.from, a.to, depth, ttFrom, ttTo),
   )
 }
 
@@ -124,7 +135,6 @@ function quiescence(
   const captures = getAllLegalMoves(board, color).filter(m => board[m.to.row][m.to.col])
   if (captures.length === 0) return standPat
 
-  // Order captures by highest victim value
   const ordered = [...captures].sort((a, b) =>
     VICTIM_VALUES[board[b.to.row][b.to.col]!.type] - VICTIM_VALUES[board[a.to.row][a.to.col]!.type],
   )
@@ -148,7 +158,7 @@ function quiescence(
   }
 }
 
-// ── Core Minimax with Alpha-Beta + TT + Killers + NMP + LMR ───────────────
+// ── Core Minimax ───────────────────────────────────────────────────────────
 function minimax(
   board: Board,
   depth: number,
@@ -158,14 +168,20 @@ function minimax(
   color: PieceColor,
   allowNullMove: boolean,
 ): number {
-  // Transposition table lookup
+  // TT lookup — also extract best move for ordering even when not cutting off
   const key = boardKey(board)
   const ttEntry = transpositionTable.get(key)
-  if (ttEntry && ttEntry.depth >= depth) {
-    if (ttEntry.flag === 'exact') return ttEntry.score
-    if (ttEntry.flag === 'lowerbound') alpha = Math.max(alpha, ttEntry.score)
-    else if (ttEntry.flag === 'upperbound') beta = Math.min(beta, ttEntry.score)
-    if (beta <= alpha) return ttEntry.score
+  let ttFrom = -1, ttTo = -1
+
+  if (ttEntry) {
+    ttFrom = ttEntry.bestFrom
+    ttTo   = ttEntry.bestTo
+    if (ttEntry.depth >= depth) {
+      if (ttEntry.flag === 'exact') return ttEntry.score
+      if (ttEntry.flag === 'lowerbound') alpha = Math.max(alpha, ttEntry.score)
+      else if (ttEntry.flag === 'upperbound') beta = Math.min(beta, ttEntry.score)
+      if (beta <= alpha) return ttEntry.score
+    }
   }
 
   if (depth === 0)
@@ -177,8 +193,6 @@ function minimax(
   const nextColor: PieceColor = color === 'red' ? 'black' : 'red'
 
   // ── Null Move Pruning ──────────────────────────────────────────────────
-  // Skip our move. If opponent still can't improve past beta, prune.
-  // Disabled when in check (zugzwang risk) or after another null move.
   if (allowNullMove && depth >= 3 && !isInCheck(board, color)) {
     const R = depth >= 6 ? 3 : 2
     const nullScore = minimax(board, depth - 1 - R, alpha, beta, !isMaximizing, nextColor, false)
@@ -186,32 +200,44 @@ function minimax(
     if (!isMaximizing && nullScore <= alpha) return alpha
   }
 
-  const moves = orderMoves(board, getAllLegalMoves(board, color), depth)
+  const moves = orderMoves(board, getAllLegalMoves(board, color), depth, ttFrom, ttTo)
   if (moves.length === 0) return evaluate(board)
 
   let flag: TTFlag = 'upperbound'
   let bestScore = isMaximizing ? MIN_SCORE : MAX_SCORE
+  // Track best move for TT storage
+  let newTtFrom = moves[0].from.row * 9 + moves[0].from.col
+  let newTtTo   = moves[0].to.row   * 9 + moves[0].to.col
 
   if (isMaximizing) {
     let moveCount = 0
     for (const { from, to } of moves) {
       moveCount++
-      const isCapture = !!board[to.row][to.col]
+      const isCapture   = !!board[to.row][to.col]
       const isKillerMove = isKiller(depth, { from, to })
+      const newBoard    = applyMove(board, from, to)
+
+      // ── Check Extension ─────────────────────────────────────────────
+      // If this move gives check at the horizon, extend by 1 to find evasions.
+      const givesCheck = (depth === 1) && isInCheck(newBoard, nextColor)
+      const ext = givesCheck ? 1 : 0
 
       // ── Late Move Reductions ─────────────────────────────────────────
-      // Quiet moves after the first 3 are searched at reduced depth.
-      // If they beat alpha, re-search at full depth.
       let evalScore: number
-      if (moveCount > 3 && depth >= 3 && !isCapture && !isKillerMove) {
-        evalScore = minimax(applyMove(board, from, to), depth - 2, alpha, beta, false, nextColor, true)
+      if (!ext && moveCount > 3 && depth >= 3 && !isCapture && !isKillerMove) {
+        evalScore = minimax(newBoard, depth - 2, alpha, beta, false, nextColor, true)
         if (evalScore > alpha)
-          evalScore = minimax(applyMove(board, from, to), depth - 1, alpha, beta, false, nextColor, true)
+          evalScore = minimax(newBoard, depth - 1, alpha, beta, false, nextColor, true)
       } else {
-        evalScore = minimax(applyMove(board, from, to), depth - 1, alpha, beta, false, nextColor, true)
+        evalScore = minimax(newBoard, depth - 1 + ext, alpha, beta, false, nextColor, true)
       }
 
-      if (evalScore > bestScore) { bestScore = evalScore; flag = 'exact' }
+      if (evalScore > bestScore) {
+        bestScore = evalScore
+        newTtFrom = from.row * 9 + from.col
+        newTtTo   = to.row   * 9 + to.col
+        flag = 'exact'
+      }
       if (evalScore > alpha) alpha = evalScore
       if (beta <= alpha) {
         if (!isCapture) {
@@ -226,19 +252,28 @@ function minimax(
     let moveCount = 0
     for (const { from, to } of moves) {
       moveCount++
-      const isCapture = !!board[to.row][to.col]
+      const isCapture    = !!board[to.row][to.col]
       const isKillerMove = isKiller(depth, { from, to })
+      const newBoard     = applyMove(board, from, to)
+
+      const givesCheck = (depth === 1) && isInCheck(newBoard, nextColor)
+      const ext = givesCheck ? 1 : 0
 
       let evalScore: number
-      if (moveCount > 3 && depth >= 3 && !isCapture && !isKillerMove) {
-        evalScore = minimax(applyMove(board, from, to), depth - 2, alpha, beta, true, nextColor, true)
+      if (!ext && moveCount > 3 && depth >= 3 && !isCapture && !isKillerMove) {
+        evalScore = minimax(newBoard, depth - 2, alpha, beta, true, nextColor, true)
         if (evalScore < beta)
-          evalScore = minimax(applyMove(board, from, to), depth - 1, alpha, beta, true, nextColor, true)
+          evalScore = minimax(newBoard, depth - 1, alpha, beta, true, nextColor, true)
       } else {
-        evalScore = minimax(applyMove(board, from, to), depth - 1, alpha, beta, true, nextColor, true)
+        evalScore = minimax(newBoard, depth - 1 + ext, alpha, beta, true, nextColor, true)
       }
 
-      if (evalScore < bestScore) { bestScore = evalScore; flag = 'exact' }
+      if (evalScore < bestScore) {
+        bestScore = evalScore
+        newTtFrom = from.row * 9 + from.col
+        newTtTo   = to.row   * 9 + to.col
+        flag = 'exact'
+      }
       if (evalScore < beta) beta = evalScore
       if (beta <= alpha) {
         if (!isCapture) {
@@ -252,7 +287,7 @@ function minimax(
   }
 
   if (transpositionTable.size > TT_MAX_SIZE) transpositionTable.clear()
-  transpositionTable.set(key, { score: bestScore, depth, flag })
+  transpositionTable.set(key, { score: bestScore, depth, flag, bestFrom: newTtFrom, bestTo: newTtTo })
   return bestScore
 }
 
@@ -263,25 +298,39 @@ function resetSearchState() {
   historyTable.clear()
 }
 
-function findBestMove(board: Board, color: PieceColor, depth: number): AIMove | null {
-  const moves = orderMoves(board, getAllLegalMoves(board, color), depth)
+function findBestMove(
+  board: Board,
+  color: PieceColor,
+  depth: number,
+  initAlpha = MIN_SCORE,
+  initBeta  = MAX_SCORE,
+): AIMove | null {
+  const key = boardKey(board)
+  const ttEntry = transpositionTable.get(key)
+  const ttFrom = ttEntry?.bestFrom ?? -1
+  const ttTo   = ttEntry?.bestTo   ?? -1
+
+  const moves = orderMoves(board, getAllLegalMoves(board, color), depth, ttFrom, ttTo)
   if (moves.length === 0) return null
 
   const isMaximizing = color === 'red'
-  let bestMove: AIMove | null = null
-  let bestScore = isMaximizing ? MIN_SCORE : MAX_SCORE
-  let alpha = MIN_SCORE
-  let beta  = MAX_SCORE
+  // Initialize to absolute extreme so we always return the truly best move found.
+  let bestMove: AIMove = {
+    from: moves[0].from, to: moves[0].to,
+    score: isMaximizing ? MIN_SCORE : MAX_SCORE,
+  }
+  let alpha = initAlpha
+  let beta  = initBeta
   const nextColor: PieceColor = color === 'red' ? 'black' : 'red'
 
   for (const { from, to } of moves) {
     const score = minimax(applyMove(board, from, to), depth - 1, alpha, beta, !isMaximizing, nextColor, true)
-    if (isMaximizing ? score > bestScore : score < bestScore) {
-      bestScore = score
+    if (isMaximizing ? score > bestMove.score : score < bestMove.score) {
       bestMove = { from, to, score }
       if (isMaximizing) alpha = Math.max(alpha, score)
       else              beta  = Math.min(beta,  score)
     }
+    if (beta <= alpha) break
   }
   return bestMove
 }
@@ -291,7 +340,11 @@ export function getBestMove(board: Board, color: PieceColor, depth: number): AIM
   return findBestMove(board, color, depth)
 }
 
-/** Iterative deepening for expert mode — shares TT across depths. */
+/**
+ * Iterative deepening with aspiration windows.
+ * At each depth ≥ 3, search with a ±50 window around the previous score first.
+ * On failure, fall back to full-window (TT from the narrow search speeds it up).
+ */
 export function getBestMoveIterative(
   board: Board,
   color: PieceColor,
@@ -301,9 +354,31 @@ export function getBestMoveIterative(
   const start = Date.now()
   resetSearchState()
   let best: AIMove | null = null
+  let prevScore = 0
+  const isMax = color === 'red'
 
   for (let depth = 1; depth <= maxDepth; depth++) {
-    const move = findBestMove(board, color, depth)
+    let move: AIMove | null
+
+    if (depth <= 2) {
+      // Full window for shallow depths — not worth aspirating
+      move = findBestMove(board, color, depth)
+      if (move) prevScore = move.score
+    } else {
+      // Aspiration: try narrow window first
+      const DELTA = 50
+      move = findBestMove(board, color, depth, prevScore - DELTA, prevScore + DELTA)
+
+      // If the returned score fell outside the window, the TT is now primed
+      // so the full-window retry will be significantly faster.
+      if (move && (isMax ? move.score <= prevScore - DELTA || move.score >= prevScore + DELTA
+                         : move.score >= prevScore + DELTA || move.score <= prevScore - DELTA)) {
+        move = findBestMove(board, color, depth)
+      }
+
+      if (move) prevScore = move.score
+    }
+
     if (move) best = move
     if (Date.now() - start > timeLimitMs) break
   }
