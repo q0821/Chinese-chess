@@ -67,8 +67,15 @@ export const useGameStore = defineStore('game', () => {
         sfWorkerReady = false
         sfPendingGo = null
         isAIThinking.value = false
-        const snap = cloneBoard(board.value)
-        triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+        // Only fall back if it's genuinely the AI's turn (error may fire during pre-warm)
+        if (
+          mode.value === 'pvc' &&
+          currentTurn.value !== playerColor.value &&
+          (status.value === 'playing' || status.value === 'check')
+        ) {
+          const snap = cloneBoard(board.value)
+          triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+        }
       }
     }
     worker.onerror = () => {
@@ -78,8 +85,14 @@ export const useGameStore = defineStore('game', () => {
       sfWorkerReady = false
       sfPendingGo = null
       isAIThinking.value = false
-      const snap = cloneBoard(board.value)
-      triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+      if (
+        mode.value === 'pvc' &&
+        currentTurn.value !== playerColor.value &&
+        (status.value === 'playing' || status.value === 'check')
+      ) {
+        const snap = cloneBoard(board.value)
+        triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+      }
     }
   }
 
@@ -253,7 +266,8 @@ export const useGameStore = defineStore('game', () => {
     aiWorker = worker
     worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
       worker.terminate()
-      if (aiWorker === worker) aiWorker = null
+      if (aiWorker !== worker) return  // stale: new game / undo happened
+      aiWorker = null
       isAIThinking.value = false
       if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
     }
