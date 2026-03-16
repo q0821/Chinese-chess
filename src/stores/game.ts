@@ -28,16 +28,60 @@ export const useGameStore = defineStore('game', () => {
   const replayIndex = ref(0)
   const theme = ref<Theme>('traditional')
 
-  // Track active AI worker so we can terminate it on undo/new game
+  // Minimax worker (easy/medium) — created per-move
   let aiWorker: Worker | null = null
-  // Track SMP workers for expert mode parallel search
-  let smpWorkers: Worker[] = []
+
+  // Stockfish worker (hard/expert) — persisted across moves
+  let sfWorker: Worker | null = null
+  let sfWorkerReady = false
+  let sfPendingGo: (() => void) | null = null
+
+  function ensureSfWorker() {
+    if (sfWorker) return
+    sfWorker = new Worker('/sf-worker.js')
+    sfWorkerReady = false
+    sfWorker.onmessage = (e: MessageEvent<{ type: string; from?: Position; to?: Position; msg?: string }>) => {
+      const data = e.data
+      if (data.type === 'ready') {
+        sfWorkerReady = true
+        sfPendingGo?.()
+        sfPendingGo = null
+      } else if (data.type === 'move') {
+        isAIThinking.value = false
+        if (data.from && data.to) makeMove(data.from as Position, data.to as Position)
+      } else if (data.type === 'error') {
+        // WASM init failed (no SharedArrayBuffer) — kill SF worker and fall back to minimax
+        sfWorker?.terminate()
+        sfWorker = null
+        sfWorkerReady = false
+        sfPendingGo = null
+        isAIThinking.value = false
+        const snap = cloneBoard(board.value)
+        triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+      }
+    }
+    sfWorker.onerror = () => {
+      sfWorker?.terminate()
+      sfWorker = null
+      sfWorkerReady = false
+      sfPendingGo = null
+      isAIThinking.value = false
+      const snap = cloneBoard(board.value)
+      triggerMinimaxFallback(snap, currentTurn.value, difficulty.value, moveHistory.value.length)
+    }
+  }
+
+  function killSfWorker() {
+    sfWorker?.terminate()
+    sfWorker = null
+    sfWorkerReady = false
+    sfPendingGo = null
+  }
 
   function killAllWorkers() {
     aiWorker?.terminate()
     aiWorker = null
-    smpWorkers.forEach(w => w.terminate())
-    smpWorkers = []
+    killSfWorker()
   }
 
   // Computed
@@ -75,6 +119,11 @@ export const useGameStore = defineStore('game', () => {
     if (opts?.mode) mode.value = opts.mode
     if (opts?.difficulty) difficulty.value = opts.difficulty
     if (opts?.playerColor) playerColor.value = opts.playerColor
+
+    // Pre-warm Stockfish for hard/expert so first move has no load delay
+    if (mode.value === 'pvc' && (difficulty.value === 'hard' || difficulty.value === 'expert')) {
+      ensureSfWorker()
+    }
 
     // If AI goes first (player chose black)
     if (mode.value === 'pvc' && playerColor.value === 'black') {
@@ -200,7 +249,11 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function triggerAI() {
-    killAllWorkers()
+    // Stop any running minimax worker; keep sfWorker alive to avoid reload
+    aiWorker?.terminate()
+    aiWorker = null
+    sfPendingGo = null
+    sfWorker?.postMessage({ type: 'stop' })
     isAIThinking.value = true
     const boardSnapshot = cloneBoard(board.value)
     const color = currentTurn.value
@@ -208,39 +261,16 @@ export const useGameStore = defineStore('game', () => {
     const moveCount = moveHistory.value.length
 
     if (diff === 'hard' || diff === 'expert') {
-      // Fairy-Stockfish (NNUE) path — much stronger than our minimax
+      // Fairy-Stockfish (NNUE) path — worker persists across moves (no reload cost)
       const timeMs = diff === 'expert' ? 5000 : 2000
-      const worker = new Worker('/sf-worker.js') // classic worker (not ES module)
-      aiWorker = worker
-
-      const onReady = () => {
-        worker.postMessage({ type: 'go', board: boardSnapshot, color, timeMs })
+      const sendGo = () => {
+        sfWorker?.postMessage({ type: 'go', board: boardSnapshot, color, timeMs })
       }
-
-      let engineReady = false
-      worker.onmessage = (e: MessageEvent<{ type: string; from?: Position; to?: Position; msg?: string }>) => {
-        const data = e.data
-        if (data.type === 'ready' && !engineReady) {
-          engineReady = true
-          onReady()
-        } else if (data.type === 'move') {
-          worker.terminate()
-          if (aiWorker === worker) aiWorker = null
-          isAIThinking.value = false
-          if (data.from && data.to) makeMove(data.from, data.to)
-        } else if (data.type === 'error') {
-          // Stockfish failed (e.g. no SharedArrayBuffer) — fall back to minimax
-          worker.terminate()
-          if (aiWorker === worker) aiWorker = null
-          isAIThinking.value = false
-          triggerMinimaxFallback(boardSnapshot, color, diff, moveCount)
-        }
-      }
-      worker.onerror = () => {
-        worker.terminate()
-        if (aiWorker === worker) aiWorker = null
-        isAIThinking.value = false
-        triggerMinimaxFallback(boardSnapshot, color, diff, moveCount)
+      ensureSfWorker()
+      if (sfWorkerReady) {
+        sendGo()
+      } else {
+        sfPendingGo = sendGo
       }
     } else {
       // Single-worker minimax for easy / medium
