@@ -20,9 +20,9 @@ const DEPTH_MAP: Record<Difficulty, number> = {
 self.onmessage = (e: MessageEvent<WorkerRequest>) => {
   const { board, color, difficulty, moveCount } = e.data
 
-  // Opening book for non-easy difficulties (Red's first move only)
+  // Opening book for non-easy difficulties (Red's first 3 moves)
   if (difficulty !== 'easy' && color === 'red') {
-    const openingMove = getOpeningMove(moveCount)
+    const openingMove = getOpeningMove(moveCount, board)
     if (openingMove) {
       self.postMessage({ move: openingMove })
       return

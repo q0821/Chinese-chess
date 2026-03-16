@@ -1,14 +1,46 @@
 import type { Board, PieceColor, PieceType } from '../game/types'
 
-// Material values
+// Base material values (mid-game reference)
 const PIECE_VALUES: Record<PieceType, number> = {
   king:     100000,
   rook:     900,
-  cannon:   450,
-  horse:    400,
+  cannon:   450,  // adjusted dynamically by game phase
+  horse:    400,  // adjusted dynamically by game phase
   elephant: 200,
   advisor:  200,
   pawn:     100,
+}
+
+// ── Game Phase ─────────────────────────────────────────────────────────────
+// Count non-royal pieces to determine opening / mid / endgame.
+// Starting position has 28 non-royal pieces (14 per side).
+// Below ~12 we treat it as endgame.
+const PHASE_MAX = 28
+
+/** Returns 0.0 (endgame) … 1.0 (opening/midgame). */
+function gamePhase(board: Board): number {
+  let count = 0
+  for (let r = 0; r < 10; r++)
+    for (let c = 0; c < 9; c++) {
+      const p = board[r][c]
+      if (p && p.type !== 'king' && p.type !== 'advisor' && p.type !== 'elephant')
+        count++
+    }
+  return Math.min(count, PHASE_MAX) / PHASE_MAX
+}
+
+/**
+ * Cannon is powerful in the opening/midgame (many screens) but weakens in the
+ * endgame when there are few pieces to jump over.
+ *   opening: 450   endgame: 250
+ *
+ * Horse is the opposite — less obstructed in the endgame.
+ *   opening: 400   endgame: 460
+ */
+function phasedValue(type: PieceType, phase: number): number {
+  if (type === 'cannon') return Math.round(250 + phase * 200)  // 250 → 450
+  if (type === 'horse')  return Math.round(460 - phase * 60)   // 460 → 400
+  return PIECE_VALUES[type]
 }
 
 // Position score tables (row 0 = black side top, row 9 = red side bottom)
@@ -81,12 +113,13 @@ function getPosScore(type: PieceType, row: number, col: number, color: PieceColo
 }
 
 export function evaluate(board: Board): number {
+  const phase = gamePhase(board)
   let score = 0
   for (let r = 0; r < 10; r++) {
     for (let c = 0; c < 9; c++) {
       const piece = board[r][c]
       if (!piece) continue
-      const materialScore = PIECE_VALUES[piece.type]
+      const materialScore = phasedValue(piece.type, phase)
       const posScore = getPosScore(piece.type, r, c, piece.color)
       const total = materialScore + posScore
       score += piece.color === 'red' ? total : -total

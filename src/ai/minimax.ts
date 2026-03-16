@@ -203,6 +203,20 @@ function minimax(
   const moves = orderMoves(board, getAllLegalMoves(board, color), depth, ttFrom, ttTo)
   if (moves.length === 0) return evaluate(board)
 
+  // ── Futility Pruning ────────────────────────────────────────────────────
+  // At depth 1-2, if the static eval + a material margin can't reach alpha
+  // (or beat beta), quiet moves are unlikely to help — skip them.
+  // Only safe when NOT in check (all evasions must be searched).
+  const FUTILITY_MARGINS = [0, 200, 450] // depth 0 unused, depth 1 ≈ pawn+, depth 2 ≈ cannon
+  const inCheck = depth <= 2 && isInCheck(board, color)
+  const futilityMargin = (!inCheck && depth <= 2) ? FUTILITY_MARGINS[depth] : 0
+  let futilePruning = false
+  if (futilityMargin > 0) {
+    const staticScore = evaluate(board)
+    if (isMaximizing && staticScore + futilityMargin <= alpha) futilePruning = true
+    if (!isMaximizing && staticScore - futilityMargin >= beta)  futilePruning = true
+  }
+
   let flag: TTFlag = 'upperbound'
   let bestScore = isMaximizing ? MIN_SCORE : MAX_SCORE
   // Track best move for TT storage
@@ -215,6 +229,9 @@ function minimax(
       moveCount++
       const isCapture   = !!board[to.row][to.col]
       const isKillerMove = isKiller(depth, { from, to })
+
+      // Skip futile quiet moves
+      if (futilePruning && !isCapture && !isKillerMove) continue
       const newBoard    = applyMove(board, from, to)
 
       // ── Check Extension ─────────────────────────────────────────────
@@ -254,6 +271,10 @@ function minimax(
       moveCount++
       const isCapture    = !!board[to.row][to.col]
       const isKillerMove = isKiller(depth, { from, to })
+
+      // Skip futile quiet moves
+      if (futilePruning && !isCapture && !isKillerMove) continue
+
       const newBoard     = applyMove(board, from, to)
 
       const givesCheck = (depth === 1) && isInCheck(newBoard, nextColor)
