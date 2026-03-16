@@ -5,7 +5,7 @@ import type {
   SerializedGameState, Theme,
 } from '../game/types'
 import { createInitialBoard, applyMove, cloneBoard } from '../game/board'
-import { getLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
+import { getLegalMoves, getAllLegalMoves, isInCheck, isCheckmate, isStalemate } from '../game/rules'
 import { generateNotation } from '../game/notation'
 import { autoSave } from '../utils/storage'
 import { playMove, playCapture, playCheck, playCheckmate } from '../utils/sound'
@@ -30,6 +30,15 @@ export const useGameStore = defineStore('game', () => {
 
   // Track active AI worker so we can terminate it on undo/new game
   let aiWorker: Worker | null = null
+  // Track SMP workers for expert mode parallel search
+  let smpWorkers: Worker[] = []
+
+  function killAllWorkers() {
+    aiWorker?.terminate()
+    aiWorker = null
+    smpWorkers.forEach(w => w.terminate())
+    smpWorkers = []
+  }
 
   // Computed
   const isPlayerTurn = computed(() => {
@@ -50,8 +59,7 @@ export const useGameStore = defineStore('game', () => {
 
   // Actions
   function newGame(opts?: { mode?: GameMode; difficulty?: Difficulty; playerColor?: PieceColor }) {
-    aiWorker?.terminate()
-    aiWorker = null
+    killAllWorkers()
     board.value = createInitialBoard()
     initialBoard.value = cloneBoard(board.value)
     currentTurn.value = 'red'
@@ -75,8 +83,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function goToSetup() {
-    aiWorker?.terminate()
-    aiWorker = null
+    killAllWorkers()
     isAIThinking.value = false
     status.value = 'setup'
   }
@@ -176,32 +183,76 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function triggerAI() {
-    aiWorker?.terminate()
+    killAllWorkers()
     isAIThinking.value = true
     const boardSnapshot = cloneBoard(board.value)
     const color = currentTurn.value
     const diff = difficulty.value
     const moveCount = moveHistory.value.length
 
-    const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
-    aiWorker = worker
+    if (diff === 'expert') {
+      // SMP: distribute root moves across parallel workers
+      const allMoves = getAllLegalMoves(boardSnapshot, color)
+      if (allMoves.length === 0) { isAIThinking.value = false; return }
 
-    worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
-      worker.terminate()
-      if (aiWorker === worker) aiWorker = null
-      isAIThinking.value = false
-      if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
+      const nWorkers = Math.min(4, navigator.hardwareConcurrency || 2)
+      const chunks: Array<typeof allMoves> = Array.from({ length: nWorkers }, () => [])
+      allMoves.forEach((m, i) => chunks[i % nWorkers].push(m))
+      const nonEmptyChunks = chunks.filter(c => c.length > 0)
+
+      let completed = 0
+      let bestMove: { from: Position; to: Position } | null = null
+      let bestScore = color === 'red' ? -Infinity : Infinity
+      const spawnedWorkers: Worker[] = []
+
+      for (const chunk of nonEmptyChunks) {
+        const worker = new Worker(new URL('../ai/smp-worker.ts', import.meta.url), { type: 'module' })
+        spawnedWorkers.push(worker)
+        smpWorkers.push(worker)
+
+        worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position; score: number } | null }>) => {
+          worker.terminate()
+          completed++
+
+          const result = e.data.move
+          if (result) {
+            const better = color === 'red' ? result.score > bestScore : result.score < bestScore
+            if (!bestMove || better) {
+              bestScore = result.score
+              bestMove = { from: result.from, to: result.to }
+            }
+          }
+
+          if (completed === spawnedWorkers.length) {
+            smpWorkers = smpWorkers.filter(w => !spawnedWorkers.includes(w))
+            isAIThinking.value = false
+            if (bestMove) makeMove(bestMove.from, bestMove.to)
+          }
+        }
+
+        worker.postMessage({ board: boardSnapshot, color, moves: chunk, maxDepth: 8, timeLimitMs: 5000 })
+      }
+    } else {
+      // Single-worker path for easy / medium / hard
+      const worker = new Worker(new URL('../ai/ai.worker.ts', import.meta.url), { type: 'module' })
+      aiWorker = worker
+
+      worker.onmessage = (e: MessageEvent<{ move: { from: Position; to: Position } | null }>) => {
+        worker.terminate()
+        if (aiWorker === worker) aiWorker = null
+        isAIThinking.value = false
+        if (e.data.move) makeMove(e.data.move.from, e.data.move.to)
+      }
+
+      worker.postMessage({ board: boardSnapshot, color, difficulty: diff, moveCount })
     }
-
-    worker.postMessage({ board: boardSnapshot, color, difficulty: diff, moveCount })
   }
 
   function undoMove() {
     if (moveHistory.value.length === 0) return
     if (isInReplay.value) return
 
-    aiWorker?.terminate()
-    aiWorker = null
+    killAllWorkers()
     isAIThinking.value = false
 
     // In PvC mode, undo both AI move and player move
@@ -301,8 +352,7 @@ export const useGameStore = defineStore('game', () => {
   }
 
   function loadState(state: SerializedGameState) {
-    aiWorker?.terminate()
-    aiWorker = null
+    killAllWorkers()
     board.value = state.board
     initialBoard.value = createInitialBoard()
     currentTurn.value = state.currentTurn

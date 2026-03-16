@@ -362,6 +362,45 @@ export function getBestMove(board: Board, color: PieceColor, depth: number): AIM
 }
 
 /**
+ * Evaluates a specific subset of root moves (used by SMP workers).
+ * Each worker receives a disjoint slice of the root move list and searches
+ * independently with its own transposition/killer/history tables.
+ */
+export function evaluateMoveSubset(
+  board: Board,
+  color: PieceColor,
+  moves: Array<{ from: Position; to: Position }>,
+  maxDepth: number,
+  timeLimitMs: number,
+): AIMove | null {
+  resetSearchState()
+  const start = Date.now()
+  const isMaximizing = color === 'red'
+  const nextColor: PieceColor = color === 'red' ? 'black' : 'red'
+  let best: AIMove | null = null
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    let bestScore = isMaximizing ? MIN_SCORE : MAX_SCORE
+    let depthBest: AIMove | null = null
+    let alpha = MIN_SCORE
+    let beta  = MAX_SCORE
+
+    for (const { from, to } of moves) {
+      const score = minimax(applyMove(board, from, to), depth - 1, alpha, beta, !isMaximizing, nextColor, true)
+      if (isMaximizing ? score > bestScore : score < bestScore) {
+        bestScore = score
+        depthBest = { from, to, score }
+      }
+      if (isMaximizing) alpha = Math.max(alpha, score)
+      else              beta  = Math.min(beta,  score)
+    }
+    if (depthBest) best = depthBest
+    if (Date.now() - start > timeLimitMs) break
+  }
+  return best
+}
+
+/**
  * Iterative deepening with aspiration windows.
  * At each depth ≥ 3, search with a ±50 window around the previous score first.
  * On failure, fall back to full-window (TT from the narrow search speeds it up).
