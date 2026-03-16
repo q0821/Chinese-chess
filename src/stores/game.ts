@@ -46,10 +46,13 @@ export const useGameStore = defineStore('game', () => {
       if (sfWorker !== worker) return
       const data = e.data
       if (data.type === 'ready') {
+        console.log('[sf] ready | isAIThinking=', isAIThinking.value, 'hasPending=', !!sfPendingGo)
         sfWorkerReady = true
         sfPendingGo?.()
         sfPendingGo = null
       } else if (data.type === 'move') {
+        console.log('[sf] move | isAIThinking=', isAIThinking.value, 'currentTurn=', currentTurn.value, 'playerColor=', playerColor.value, 'status=', status.value, 'from=', data.from, 'to=', data.to)
+        console.trace()
         isAIThinking.value = false
         // Ignore stale results if it's no longer the AI's turn
         if (
@@ -59,6 +62,8 @@ export const useGameStore = defineStore('game', () => {
           (status.value === 'playing' || status.value === 'check')
         ) {
           makeMove(data.from as Position, data.to as Position)
+        } else {
+          console.warn('[sf] move DISCARDED — guard failed', { currentTurn: currentTurn.value, playerColor: playerColor.value, status: status.value })
         }
       } else if (data.type === 'error') {
         // WASM init failed (no SharedArrayBuffer) — kill SF worker and fall back to minimax
@@ -277,9 +282,14 @@ export const useGameStore = defineStore('game', () => {
   function triggerAI() {
     // Guard against stale setTimeout calls after undo / new game
     if (mode.value !== 'pvc') return
-    if (currentTurn.value === playerColor.value) return
+    if (currentTurn.value === playerColor.value) {
+      console.warn('[triggerAI] skipped — player turn', { currentTurn: currentTurn.value, playerColor: playerColor.value })
+      return
+    }
     if (status.value !== 'playing' && status.value !== 'check') return
 
+    console.log('[triggerAI] STARTING', { currentTurn: currentTurn.value, playerColor: playerColor.value, diff: difficulty.value })
+    console.trace()
     // Stop any running minimax worker; keep sfWorker alive to avoid reload
     aiWorker?.terminate()
     aiWorker = null
